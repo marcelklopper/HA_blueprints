@@ -622,6 +622,7 @@ action:
           - variables:
               id: "{{ trigger.payload_json['after']['id'] }}"
               object: "{{ trigger.payload_json['after']['label'] }}"
+              summary: "{{ trigger.payload_json['after']['summary'] }}"
               label: "{{ object | title }}"
               # Dynamic Variables per event
               initial_home: "{{ presence_entity != '' and is_state(presence_entity, 'home') }}"
@@ -666,6 +667,7 @@ action:
                             sound: {{sound}},
                             Title: {{title}}, 
                             Message: {{message}},
+                            Summary: {{summary if summary != '' else '<EMPTY>'}}
                             tap_action: {{tap_action}}, 
                             button 1 Text/URL: {{iif(button_1, button_1, 'unset')}} ({{url_1}}), 
                             button 2 Text/URL: {{button_2}} ({{url_2}}), 
@@ -713,7 +715,7 @@ action:
                             domain: mobile_app
                             type: notify
                             title: "{{title}}"
-                            message: "{{message}}"
+                            message: "{{message}} {{summary}}"
                             data:
                               tag: "{{ id }}"
                               group: "{{ camera }}-frigate-notification"
@@ -794,7 +796,7 @@ action:
                       - service: "notify.{{ group_target }}"
                         data:
                           title: "{{title}}"
-                          message: "{{message}}"
+                          message: "{{message}} {{summary}}"
                           data:
                             tag: "{{ id }}{{'-loitering' if loitering}}"
                             group: "{{ camera }}-frigate-notification{{'-loitering' if loitering}}"
@@ -840,12 +842,13 @@ action:
                       payload: "{{ id }}"
                       value_template: "{{ value_json['after']['id'] }}"
                   timeout:
-                    minutes: 2
+                    minutes: 5
                   continue_on_timeout: false
                 - variables:
                     event: "{{ wait.trigger.payload_json }}"
                     loitering: "{{ loiter_timer and event['before']['motionless_count']/fps/60 < loiter_timer and event['after']['motionless_count']/fps/60 >= loiter_timer }}"
                     new_snapshot: "{{ update_thumbnail and event['before']['snapshot_time'] != event['after']['snapshot_time'] }}"
+                    new_summary: "{{ event['before']['summary'] != event['after']['summary'] }}"
                     home: "{{ presence_entity != '' and is_state(presence_entity, 'home') }}"
                     presence_changed: "{{ presence_entity != '' and as_datetime(event['before']['frame_time']) < states[presence_entity].last_changed }}"
                     last_zones: "{{ event['before']['entered_zones'] |lower}}"
@@ -871,6 +874,7 @@ action:
                       {%else%}
                         {{message}}
                       {%endif%}
+                    summary: "{{event['after']['summary'] }}"
                 - alias: "Debug: write to Log"
                   choose:
                     - conditions:
@@ -887,12 +891,15 @@ action:
                                   sublabel: {{sub_label}},
                                   iOS sound: {{update if not critical else 'yes due critical notifications'}}, 
                                   Android Sound: {{'disabled by alert once' if alert_once else 'enabled'}}, 
+                                  summary: {{summary if summary != '' else '<EMPTY>'}}
                                 Triggers: 
                                   New Snapshot: {{new_snapshot}}, 
                                   Presence Changed: {{presence_changed}}, 
                                   stationary moved: {{stationary_moved}}, 
                                   entered zones changed: {{entered_zones_changed}}, 
                                   sublabel changed: {{sub_label_changed}}, 
+                                  timeout: {{not wait.trigger}},
+                                  summary_from_wait_trigger: {{ wait.trigger.payload_json['after']['summary'] }}
                                 Conditions: 
                                   Loitering: {{loitering}}
                                     or 
@@ -904,7 +911,7 @@ action:
                                   image: "/api/frigate/notifications/{{id}}/{{attachment}}.jpg"
                 - alias: "Notify on loitering or significant change"
                   choose:
-                    - conditions: "{{ loitering or (not home and zone_filter and zone_multi_filter and state_true and (new_snapshot or presence_changed or stationary_moved or zone_only_changed or entered_zones_changed or sub_label_changed)) }}"
+                    - conditions: "{{ new_summary or loitering or (not home and zone_filter and zone_multi_filter and state_true and (new_snapshot or presence_changed or stationary_moved or zone_only_changed or entered_zones_changed or sub_label_changed)) }}"
                       sequence:
                         - choose:
                             - conditions: "{{ not group_target }}"
@@ -913,7 +920,7 @@ action:
                                   domain: mobile_app
                                   type: notify
                                   title: "{{title}}"
-                                  message: "{{message}}"
+                                  message: "{{message}} {{summary}}"
                                   data:
                                     tag: "{{ id }}{{'-loitering' if loitering}}"
                                     group: "{{ camera }}-frigate-notification{{'-loitering' if loitering}}"
@@ -996,7 +1003,7 @@ action:
                             - service: "notify.{{ group_target }}"
                               data:
                                 title: "{{title}}"
-                                message: "{{message}}"
+                                message: "{{message}} {{summary}}"
                                 data:
                                   tag: "{{ id }}{{'-loitering' if loitering}}"
                                   group: "{{ camera }}-frigate-notification{{'-loitering' if loitering}}"
@@ -1035,4 +1042,5 @@ action:
                                       title: "{{button_3}}"
                                       uri: "{{url_3}}"
                                       destructive: true
-              until: "{{ not wait.trigger or wait.trigger.payload_json['type'] == 'end' }}"
+              until: "{{ not wait.trigger or (wait.trigger.payload_json['type'] == 'end' and summary != '') }}"
+
